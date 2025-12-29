@@ -1,0 +1,2 @@
+# LLM_MC
+基于Mineflayer，用fastapi作为后端的让LLM可以玩MC的小项目
