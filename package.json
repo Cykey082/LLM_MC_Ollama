@@ -1,0 +1,31 @@
+{
+  "name": "llm-mc",
+  "version": "0.1.0",
+  "description": "LLM-powered Minecraft bot framework based on mineflayer",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "minecraft",
+    "mineflayer",
+    "llm",
+    "ai",
+    "bot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "mineflayer": "^4.20.1",
+    "mineflayer-pathfinder": "^2.4.5",
+    "minecraft-data": "^3.61.0",
+    "openai": "^4.20.0",
+    "dotenv": "^16.3.1",
+    "vec3": "^0.1.10"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
