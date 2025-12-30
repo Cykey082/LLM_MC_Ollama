@@ -118,6 +118,11 @@ export class Actions {
         }
       },
       {
+        name: 'listPlayers',
+        description: 'List all online players on the server with their names and positions',
+        parameters: {}
+      },
+      {
         name: 'dropItem',
         description: 'Drop/throw items from inventory',
         parameters: {
@@ -239,6 +244,40 @@ export class Actions {
         parameters: {
           maxDistance: 'number - Optional: maximum search distance (default: 32)'
         }
+      },
+      // ===== 实体交互动作 =====
+      {
+        name: 'mountEntity',
+        description: 'Mount/ride an entity like horse, boat, minecart, pig, etc.',
+        parameters: {
+          entityType: 'string - Optional: type of entity to mount (e.g., horse, boat, minecart). If not specified, mounts nearest mountable entity'
+        }
+      },
+      {
+        name: 'dismount',
+        description: 'Dismount from the currently mounted entity (get off horse, boat, etc.)',
+        parameters: {}
+      },
+      {
+        name: 'useOnEntity',
+        description: 'Right-click/interact with an entity (e.g., feed animal, trade with villager, attach lead)',
+        parameters: {
+          entityType: 'string - Type of entity to interact with',
+          hand: 'string - Optional: which hand to use (hand or off-hand, default: hand)'
+        }
+      },
+      // ===== 数据查询动作 =====
+      {
+        name: 'getRecipeData',
+        description: 'Get recipe data from minecraft-data for an item (raw recipe info from game data)',
+        parameters: {
+          itemName: 'string - Name of the item to get recipe data for'
+        }
+      },
+      {
+        name: 'getAllRecipes',
+        description: 'Get all available recipes from minecraft-data (for caching/analysis)',
+        parameters: {}
       }
     ];
   }
@@ -284,6 +323,8 @@ export class Actions {
           return await this.getBlockAt(params.x, params.y, params.z);
         case 'scanEntities':
           return await this.scanEntities(params.range, params.entityType);
+        case 'listPlayers':
+          return await this.listPlayers();
         case 'dropItem':
           return await this.dropItem(params.itemName, params.count);
         case 'eat':
@@ -317,6 +358,18 @@ export class Actions {
           return await this.findFurnace(params.maxDistance);
         case 'findChest':
           return await this.findChest(params.maxDistance);
+        // 实体交互动作
+        case 'mountEntity':
+          return await this.mountEntity(params.entityType);
+        case 'dismount':
+          return await this.dismount();
+        case 'useOnEntity':
+          return await this.useOnEntity(params.entityType, params.hand);
+        // 数据查询动作
+        case 'getRecipeData':
+          return await this.getRecipeData(params.itemName);
+        case 'getAllRecipes':
+          return await this.getAllRecipes();
         default:
           return { success: false, message: `Unknown action: ${actionName}` };
       }
@@ -968,6 +1021,7 @@ export class Actions {
 
   /**
    * Drop items from inventory
+   * Returns ALL dropped item entity IDs for tracking (handles stacks that split into multiple entities)
    */
   async dropItem(itemName, count = null) {
     const item = this.mcBot.inventory.items().find(i =>
@@ -981,10 +1035,90 @@ export class Actions {
     try {
       // 如果没指定数量，丢弃全部
       const dropCount = count || item.count;
-      await this.mcBot.toss(item.type, null, Math.min(dropCount, item.count));
+      const actualDropCount = Math.min(dropCount, item.count);
+      
+      // 记录丢弃前bot附近的物品实体，以便识别新丢出的物品
+      const botPos = this.mcBot.entity.position;
+      const existingItemEntities = new Set();
+      for (const entity of Object.values(this.mcBot.entities)) {
+        if (entity.type === 'object' && entity.objectType === 'Item') {
+          existingItemEntities.add(entity.id);
+        }
+      }
+      
+      // 收集所有新生成的物品实体（一组物品可能分成多个实体）
+      const droppedEntityIds = [];
+      const droppedEntities = [];
+      
+      const entitySpawnHandler = (entity) => {
+        // 检查是否是物品实体
+        if (entity.type === 'object' && entity.objectType === 'Item') {
+          // 检查是否是新实体（不在之前的列表中）
+          if (!existingItemEntities.has(entity.id)) {
+            // 检查是否在bot附近（刚丢出的物品应该在附近）
+            const distance = botPos.distanceTo(entity.position);
+            if (distance < 5) {  // 稍微放宽距离，物品可能飞远一点
+              droppedEntityIds.push(entity.id);
+              droppedEntities.push({
+                id: entity.id,
+                position: {
+                  x: Math.floor(entity.position.x),
+                  y: Math.floor(entity.position.y),
+                  z: Math.floor(entity.position.z)
+                }
+              });
+            }
+          }
+        }
+      };
+      
+      // 添加监听器
+      this.mcBot.on('entitySpawn', entitySpawnHandler);
+      
+      // 执行丢弃
+      await this.mcBot.toss(item.type, null, actualDropCount);
+      
+      // 等待一小段时间让所有实体生成事件触发
+      // 丢弃大量物品可能需要更长时间
+      await new Promise(r => setTimeout(r, 200));
+      
+      // 移除监听器
+      this.mcBot.removeListener('entitySpawn', entitySpawnHandler);
+      
+      // 如果没捕获到任何实体ID，尝试在附近查找
+      if (droppedEntityIds.length === 0) {
+        for (const entity of Object.values(this.mcBot.entities)) {
+          if (entity.type === 'object' && entity.objectType === 'Item') {
+            if (!existingItemEntities.has(entity.id)) {
+              const distance = botPos.distanceTo(entity.position);
+              if (distance < 5) {
+                droppedEntityIds.push(entity.id);
+                droppedEntities.push({
+                  id: entity.id,
+                  position: {
+                    x: Math.floor(entity.position.x),
+                    y: Math.floor(entity.position.y),
+                    z: Math.floor(entity.position.z)
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
+      
       return {
         success: true,
-        message: `Dropped ${Math.min(dropCount, item.count)} x ${item.name}`
+        message: `Dropped ${actualDropCount} x ${item.name} (${droppedEntityIds.length} entities)`,
+        itemName: item.name,
+        count: actualDropCount,
+        // 保持向后兼容：返回第一个实体ID
+        droppedEntityId: droppedEntityIds.length > 0 ? droppedEntityIds[0] : null,
+        droppedEntity: droppedEntities.length > 0 ? droppedEntities[0] : null,
+        // 新增：返回所有实体ID和信息
+        droppedEntityIds: droppedEntityIds,
+        droppedEntities: droppedEntities,
+        entityCount: droppedEntityIds.length
       };
     } catch (error) {
       return { success: false, message: `Failed to drop item: ${error.message}` };
@@ -1167,6 +1301,67 @@ export class Actions {
         hostile: hostileCount,
         other: otherCount
       }
+    };
+  }
+
+  /**
+   * List all online players on the server
+   * Uses bot.players which contains all players with their usernames
+   */
+  async listPlayers() {
+    const players = [];
+    const botPos = this.mcBot.entity.position;
+    
+    for (const [username, player] of Object.entries(this.mcBot.players)) {
+      // 跳过 bot 自己
+      if (username === this.mcBot.username) continue;
+      
+      const playerInfo = {
+        name: username,
+        uuid: player.uuid || null,
+        ping: player.ping || null,
+        gamemode: player.gamemode || null,
+      };
+      
+      // 如果玩家实体在范围内，添加位置信息
+      if (player.entity) {
+        const distance = botPos.distanceTo(player.entity.position);
+        playerInfo.position = {
+          x: Math.floor(player.entity.position.x),
+          y: Math.floor(player.entity.position.y),
+          z: Math.floor(player.entity.position.z)
+        };
+        playerInfo.distance = Math.round(distance * 10) / 10;
+        playerInfo.inRange = true;
+      } else {
+        playerInfo.inRange = false;
+        playerInfo.position = null;
+        playerInfo.distance = null;
+      }
+      
+      players.push(playerInfo);
+    }
+    
+    // 按距离排序（在范围内的优先，然后按距离）
+    players.sort((a, b) => {
+      if (a.inRange && !b.inRange) return -1;
+      if (!a.inRange && b.inRange) return 1;
+      if (a.distance !== null && b.distance !== null) {
+        return a.distance - b.distance;
+      }
+      return 0;
+    });
+    
+    const inRangeCount = players.filter(p => p.inRange).length;
+    const playerNames = players.map(p => p.name).join(', ');
+    
+    return {
+      success: true,
+      message: `Found ${players.length} online player(s): ${playerNames || 'none'}. ${inRangeCount} in visible range.`,
+      players: players,
+      totalCount: players.length,
+      inRangeCount: inRangeCount,
+      botUsername: this.mcBot.username
     };
   }
 
@@ -1897,6 +2092,354 @@ export class Actions {
         z: block.position.z
       },
       distance: Math.round(distance * 10) / 10
+    };
+  }
+
+  // ===== 实体交互动作实现 =====
+
+  /**
+   * Mount/ride an entity (horse, boat, minecart, pig, etc.)
+   * @param {string} entityType - Optional: specific entity type to mount
+   */
+  async mountEntity(entityType = null) {
+    // 可骑乘的实体类型
+    const mountableTypes = [
+      'horse', 'donkey', 'mule', 'skeleton_horse', 'zombie_horse',
+      'pig', 'strider', 'camel', 'llama', 'trader_llama',
+      'boat', 'chest_boat', 'minecart', 'chest_minecart', 'hopper_minecart',
+      'oak_boat', 'spruce_boat', 'birch_boat', 'jungle_boat', 'acacia_boat',
+      'dark_oak_boat', 'mangrove_boat', 'cherry_boat', 'bamboo_raft'
+    ];
+
+    const botPos = this.mcBot.entity.position;
+    let targetEntity = null;
+    let closestDistance = Infinity;
+
+    // 查找可骑乘的实体
+    for (const entity of Object.values(this.mcBot.entities)) {
+      if (entity === this.mcBot.entity) continue;
+      
+      const entityName = entity.name || entity.displayName || '';
+      const distance = botPos.distanceTo(entity.position);
+      
+      // 距离太远无法骑乘
+      if (distance > 5) continue;
+      
+      // 如果指定了类型，检查是否匹配
+      if (entityType) {
+        if (entityName.toLowerCase().includes(entityType.toLowerCase())) {
+          if (distance < closestDistance) {
+            targetEntity = entity;
+            closestDistance = distance;
+          }
+        }
+      } else {
+        // 没有指定类型，查找任何可骑乘的实体
+        const isMountable = mountableTypes.some(type =>
+          entityName.toLowerCase().includes(type.toLowerCase())
+        );
+        if (isMountable && distance < closestDistance) {
+          targetEntity = entity;
+          closestDistance = distance;
+        }
+      }
+    }
+
+    if (!targetEntity) {
+      const typeMsg = entityType ? `${entityType}` : 'mountable entity';
+      return {
+        success: false,
+        message: `No ${typeMsg} found nearby. Make sure you are within 5 blocks of the entity.`
+      };
+    }
+
+    try {
+      // 先看向实体
+      await this.mcBot.lookAt(targetEntity.position.offset(0, 1, 0));
+      
+      // 骑乘实体
+      await this.mcBot.mount(targetEntity);
+      
+      return {
+        success: true,
+        message: `Mounted ${targetEntity.name || 'entity'}`,
+        entityName: targetEntity.name,
+        entityId: targetEntity.id
+      };
+    } catch (error) {
+      return { success: false, message: `Failed to mount: ${error.message}` };
+    }
+  }
+
+  /**
+   * Dismount from current vehicle/mount
+   */
+  async dismount() {
+    const vehicle = this.mcBot.vehicle;
+    
+    if (!vehicle) {
+      return { success: false, message: 'Not currently mounted on anything' };
+    }
+
+    try {
+      await this.mcBot.dismount();
+      return {
+        success: true,
+        message: `Dismounted from ${vehicle.name || 'entity'}`,
+        entityName: vehicle.name
+      };
+    } catch (error) {
+      return { success: false, message: `Failed to dismount: ${error.message}` };
+    }
+  }
+
+  /**
+   * Right-click/interact with an entity
+   * @param {string} entityType - Type of entity to interact with
+   * @param {string} hand - Which hand to use ('hand' or 'off-hand')
+   */
+  async useOnEntity(entityType, hand = 'hand') {
+    const botPos = this.mcBot.entity.position;
+    let targetEntity = null;
+    let closestDistance = Infinity;
+
+    // 查找目标实体
+    for (const entity of Object.values(this.mcBot.entities)) {
+      if (entity === this.mcBot.entity) continue;
+      
+      const entityName = entity.name || entity.displayName || '';
+      const distance = botPos.distanceTo(entity.position);
+      
+      if (distance > 5) continue;
+      
+      if (entityName.toLowerCase().includes(entityType.toLowerCase())) {
+        if (distance < closestDistance) {
+          targetEntity = entity;
+          closestDistance = distance;
+        }
+      }
+    }
+
+    if (!targetEntity) {
+      return {
+        success: false,
+        message: `No ${entityType} found nearby (within 5 blocks)`
+      };
+    }
+
+    try {
+      // 先看向实体
+      await this.mcBot.lookAt(targetEntity.position.offset(0, 1, 0));
+      
+      // 对实体使用（右键）
+      // mineflayer 中使用 useOn 方法
+      await this.mcBot.useOn(targetEntity);
+      
+      return {
+        success: true,
+        message: `Interacted with ${targetEntity.name || entityType}`,
+        entityName: targetEntity.name,
+        entityType: targetEntity.type,
+        position: {
+          x: Math.floor(targetEntity.position.x),
+          y: Math.floor(targetEntity.position.y),
+          z: Math.floor(targetEntity.position.z)
+        }
+      };
+    } catch (error) {
+      return { success: false, message: `Failed to interact with entity: ${error.message}` };
+    }
+  }
+
+  // ===== 数据查询动作实现 =====
+
+  /**
+   * Get recipe data from minecraft-data for a specific item
+   * Returns detailed recipe information including ingredients and crafting requirements
+   * @param {string} itemName - Name of item to get recipe for
+   */
+  async getRecipeData(itemName) {
+    const mcData = minecraftData(this.mcBot.version);
+    
+    // 查找物品
+    const item = mcData.itemsByName[itemName];
+    if (!item) {
+      return { success: false, message: `Unknown item: ${itemName}` };
+    }
+
+    // 获取 minecraft-data 中的配方
+    const recipes = mcData.recipes[item.id];
+    
+    if (!recipes || recipes.length === 0) {
+      return {
+        success: true,
+        found: false,
+        message: `No recipe found in minecraft-data for ${itemName}`,
+        itemId: item.id,
+        itemName: itemName
+      };
+    }
+
+    // 解析配方信息
+    const parsedRecipes = recipes.map((recipe, index) => {
+      const parsed = {
+        index: index,
+        resultCount: recipe.result?.count || 1,
+        needsCraftingTable: false,  // 默认假设不需要
+        ingredients: {},
+        inShape: null,
+        outShape: null
+      };
+
+      // 处理有形配方 (shaped)
+      if (recipe.inShape) {
+        parsed.inShape = recipe.inShape;
+        parsed.needsCraftingTable = recipe.inShape.length > 2 ||
+                                    (recipe.inShape[0] && recipe.inShape[0].length > 2);
+        
+        // 统计材料
+        for (const row of recipe.inShape) {
+          if (!row) continue;
+          for (const cell of row) {
+            if (cell !== null && cell !== undefined) {
+              const ingredientId = typeof cell === 'object' ? cell.id : cell;
+              const ingredientItem = mcData.items[ingredientId];
+              if (ingredientItem) {
+                parsed.ingredients[ingredientItem.name] =
+                  (parsed.ingredients[ingredientItem.name] || 0) + 1;
+              }
+            }
+          }
+        }
+      }
+
+      // 处理无形配方 (shapeless)
+      if (recipe.ingredients) {
+        for (const ing of recipe.ingredients) {
+          if (ing !== null && ing !== undefined) {
+            const ingredientId = typeof ing === 'object' ? ing.id : ing;
+            const ingredientItem = mcData.items[ingredientId];
+            if (ingredientItem) {
+              parsed.ingredients[ingredientItem.name] =
+                (parsed.ingredients[ingredientItem.name] || 0) + 1;
+            }
+          }
+        }
+        // 如果材料超过4个，需要工作台
+        const totalIngredients = Object.values(parsed.ingredients).reduce((a, b) => a + b, 0);
+        if (totalIngredients > 4) {
+          parsed.needsCraftingTable = true;
+        }
+      }
+
+      return parsed;
+    });
+
+    // 生成可读描述
+    const recipeDescs = parsedRecipes.map((r, i) => {
+      const ingList = Object.entries(r.ingredients)
+        .map(([name, count]) => `${count}x ${name}`)
+        .join(' + ');
+      const tableNote = r.needsCraftingTable ? ' (需要工作台)' : ' (2x2合成)';
+      return `配方${i+1}: ${ingList} -> ${r.resultCount}x ${itemName}${tableNote}`;
+    });
+
+    return {
+      success: true,
+      found: true,
+      message: `Found ${recipes.length} recipe(s) for ${itemName}: ${recipeDescs.join('; ')}`,
+      itemId: item.id,
+      itemName: itemName,
+      recipeCount: recipes.length,
+      recipes: parsedRecipes,
+      rawRecipes: recipes  // 原始配方数据
+    };
+  }
+
+  /**
+   * Get all recipes from minecraft-data
+   * Returns a comprehensive list of all craftable items and their recipes
+   * Useful for building a recipe cache on the Python side
+   */
+  async getAllRecipes() {
+    const mcData = minecraftData(this.mcBot.version);
+    const allRecipes = {};
+    let totalRecipeCount = 0;
+
+    // 遍历所有配方
+    for (const [itemIdStr, recipes] of Object.entries(mcData.recipes)) {
+      const itemId = parseInt(itemIdStr);
+      const item = mcData.items[itemId];
+      
+      if (!item || !recipes || recipes.length === 0) continue;
+
+      const parsedRecipes = recipes.map(recipe => {
+        const parsed = {
+          resultCount: recipe.result?.count || 1,
+          needsCraftingTable: false,
+          ingredients: {}
+        };
+
+        // 处理有形配方
+        if (recipe.inShape) {
+          parsed.needsCraftingTable = recipe.inShape.length > 2 ||
+                                      (recipe.inShape[0] && recipe.inShape[0].length > 2);
+          
+          for (const row of recipe.inShape) {
+            if (!row) continue;
+            for (const cell of row) {
+              if (cell !== null && cell !== undefined) {
+                const ingredientId = typeof cell === 'object' ? cell.id : cell;
+                const ingredientItem = mcData.items[ingredientId];
+                if (ingredientItem) {
+                  parsed.ingredients[ingredientItem.name] =
+                    (parsed.ingredients[ingredientItem.name] || 0) + 1;
+                }
+              }
+            }
+          }
+        }
+
+        // 处理无形配方
+        if (recipe.ingredients) {
+          for (const ing of recipe.ingredients) {
+            if (ing !== null && ing !== undefined) {
+              const ingredientId = typeof ing === 'object' ? ing.id : ing;
+              const ingredientItem = mcData.items[ingredientId];
+              if (ingredientItem) {
+                parsed.ingredients[ingredientItem.name] =
+                  (parsed.ingredients[ingredientItem.name] || 0) + 1;
+              }
+            }
+          }
+          const totalIngredients = Object.values(parsed.ingredients).reduce((a, b) => a + b, 0);
+          if (totalIngredients > 4) {
+            parsed.needsCraftingTable = true;
+          }
+        }
+
+        return parsed;
+      });
+
+      allRecipes[item.name] = {
+        itemId: itemId,
+        recipes: parsedRecipes
+      };
+      totalRecipeCount += recipes.length;
+    }
+
+    // 返回配方统计
+    const craftableItems = Object.keys(allRecipes);
+    
+    return {
+      success: true,
+      message: `Retrieved ${totalRecipeCount} recipes for ${craftableItems.length} items`,
+      totalRecipes: totalRecipeCount,
+      totalItems: craftableItems.length,
+      version: this.mcBot.version,
+      recipes: allRecipes,
+      // 仅返回可合成物品列表（配方数据太大时可以只返回这个）
+      craftableItems: craftableItems
     };
   }
 }

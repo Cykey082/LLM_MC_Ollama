@@ -20,6 +20,16 @@ export const config = {
     port: parseInt(process.env.BOT_SERVICE_PORT) || 3001,
   },
 
+  // Viewer Configuration (prismarine-viewer)
+  viewer: {
+    enabled: process.env.VIEWER_ENABLED === 'true',
+    port: parseInt(process.env.VIEWER_PORT) || 3007,
+    firstPerson: process.env.VIEWER_FIRST_PERSON === 'true',
+  },
+
+  // Auto-connect Configuration
+  autoConnect: process.env.AUTO_CONNECT === 'true',
+
   // Debug
   debug: process.env.DEBUG === 'true',
 };

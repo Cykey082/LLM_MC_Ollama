@@ -175,6 +175,95 @@ class BotServer {
         timestamp: Date.now()
       });
     });
+
+    // Forward player collect (when a player picks up an item)
+    mcBot.on('playerCollect', (collector, collected) => {
+      // collector: the entity that collected (usually a player)
+      // collected: the item entity that was collected
+      const collectorName = collector.username || collector.name || 'unknown';
+      const collectorType = collector.type;
+      
+      // Get item info if available
+      let itemInfo = null;
+      if (collected.metadata) {
+        // In Minecraft, item entities have metadata with item info
+        // The item stack is usually in metadata[8] for recent versions
+        const itemStack = collected.metadata[8] || collected.metadata[7];
+        if (itemStack && itemStack.itemId !== undefined) {
+          itemInfo = {
+            itemId: itemStack.itemId,
+            itemCount: itemStack.itemCount || 1,
+            // We can't easily get item name without mcData lookup
+          };
+        }
+      }
+      
+      this._broadcast({
+        type: 'playerCollect',
+        collector: {
+          id: collector.id,
+          name: collectorName,
+          type: collectorType,
+          position: collector.position ? {
+            x: Math.floor(collector.position.x),
+            y: Math.floor(collector.position.y),
+            z: Math.floor(collector.position.z)
+          } : null
+        },
+        collected: {
+          id: collected.id,
+          type: collected.type,
+          name: collected.name,
+          position: collected.position ? {
+            x: Math.floor(collected.position.x),
+            y: Math.floor(collected.position.y),
+            z: Math.floor(collected.position.z)
+          } : null,
+          item: itemInfo
+        },
+        timestamp: Date.now()
+      });
+    });
+
+    // Forward item drop (when an entity drops an item)
+    mcBot.on('itemDrop', (entity) => {
+      this._broadcast({
+        type: 'itemDrop',
+        entity: {
+          id: entity.id,
+          type: entity.type,
+          name: entity.name,
+          position: entity.position ? {
+            x: Math.floor(entity.position.x),
+            y: Math.floor(entity.position.y),
+            z: Math.floor(entity.position.z)
+          } : null
+        },
+        timestamp: Date.now()
+      });
+    });
+
+    // Forward entity spawn (useful for tracking dropped items)
+    mcBot.on('entitySpawn', (entity) => {
+      // Only broadcast for item entities to avoid spam
+      if (entity.type === 'object' && entity.objectType === 'Item') {
+        this._broadcast({
+          type: 'entitySpawn',
+          entity: {
+            id: entity.id,
+            type: entity.type,
+            objectType: entity.objectType,
+            name: entity.name,
+            position: entity.position ? {
+              x: Math.floor(entity.position.x),
+              y: Math.floor(entity.position.y),
+              z: Math.floor(entity.position.z)
+            } : null
+          },
+          timestamp: Date.now()
+        });
+      }
+    });
   }
 
   _broadcast(data) {
@@ -188,10 +277,26 @@ class BotServer {
 
   start(port = 3001) {
     return new Promise((resolve) => {
-      this.server.listen(port, () => {
+      this.server.listen(port, async () => {
         console.log(`[Server] Bot service running on port ${port}`);
         console.log(`[Server] HTTP API: http://localhost:${port}`);
         console.log(`[Server] WebSocket: ws://localhost:${port}`);
+        
+        // Auto-connect if enabled
+        if (config.autoConnect) {
+          console.log('[Server] Auto-connect enabled, connecting to Minecraft...');
+          try {
+            this.bot = new Bot();
+            await this.bot.connect();
+            this.actions = new Actions(this.bot);
+            this.observer = new Observer(this.bot);
+            this._setupEventForwarding();
+            console.log('[Server] Auto-connect successful!');
+          } catch (error) {
+            console.error('[Server] Auto-connect failed:', error.message);
+          }
+        }
+        
         resolve();
       });
     });
