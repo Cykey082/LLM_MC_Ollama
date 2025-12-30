@@ -4,6 +4,19 @@ const { pathfinder, Movements } = pathfinderPkg;
 import minecraftData from 'minecraft-data';
 import { config } from './config.js';
 
+// Conditionally import prismarine-viewer
+let mineflayerViewer = null;
+if (config.viewer.enabled) {
+  try {
+    const viewerModule = await import('prismarine-viewer');
+    mineflayerViewer = viewerModule.mineflayer;
+    console.log('[Bot] prismarine-viewer loaded successfully');
+  } catch (err) {
+    console.warn('[Bot] Failed to load prismarine-viewer:', err.message);
+    console.warn('[Bot] Run "npm install prismarine-viewer" to enable viewer');
+  }
+}
+
 /**
  * Minecraft Bot wrapper class
  * Handles connection and provides interface for actions
@@ -12,6 +25,7 @@ export class Bot {
   constructor() {
     this.bot = null;
     this.isConnected = false;
+    this.viewerStarted = false;
   }
 
   /**
@@ -36,10 +50,40 @@ export class Bot {
         console.log('[Bot] Successfully spawned in game!');
         this.isConnected = true;
         
-        // Setup pathfinder
+        // Setup pathfinder with mining capabilities
         const mcData = minecraftData(this.bot.version);
         const movements = new Movements(this.bot, mcData);
+        
+        // 启用挖掘功能 - 允许 bot 挖掘方块来开辟路径
+        movements.canDig = true;
+        // 允许放置方块（用于搭桥等）
+        movements.allow1by1towers = true;
+        // 允许在水中移动
+        movements.canSwim = true;
+        // 设置最大挖掘时间（毫秒）- 避免挖太硬的方块
+        movements.maxDropDown = 4;
+        // 设置挖掘的方块类型（排除基岩等）
+        movements.blocksCantBreak.add(mcData.blocksByName['bedrock']?.id);
+        movements.blocksCantBreak.add(mcData.blocksByName['obsidian']?.id);
+        
         this.bot.pathfinder.setMovements(movements);
+        
+        // 保存 movements 引用以便后续修改
+        this.movements = movements;
+        
+        // Start prismarine-viewer if enabled
+        if (config.viewer.enabled && mineflayerViewer && !this.viewerStarted) {
+          try {
+            mineflayerViewer(this.bot, {
+              port: config.viewer.port,
+              firstPerson: config.viewer.firstPerson
+            });
+            this.viewerStarted = true;
+            console.log(`[Bot] Viewer started at http://localhost:${config.viewer.port}`);
+          } catch (err) {
+            console.error('[Bot] Failed to start viewer:', err.message);
+          }
+        }
         
         resolve();
       });
