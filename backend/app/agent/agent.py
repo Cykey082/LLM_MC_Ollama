@@ -1,6 +1,7 @@
 import asyncio
 import re
 from typing import Optional, Dict, Any
+import json
 
 from app.bot.client import bot_client
 from app.llm.client import llm_client
@@ -129,10 +130,30 @@ class Agent:
                 "time": observation.get("time")
             })
             
+            # print(f"[Agent] System Prompt: {system_prompt}")
+            # print(f"[Agent] User Message: {user_message}")
+
             response = await llm_client.chat_json(system_prompt, user_message)
             
             if settings.debug:
                 print(f"[Agent] LLM Response: {response}")
+            response=response["response"]
+            # from string to json
+            print(f"[Agent] LLM Response: {response}")
+            try:
+                response=json.loads(response)
+            except json.JSONDecodeError:
+                patterns = [r'```json\s*([\s\S]*?)\s*```', r'```\s*([\s\S]*?)\s*```', r'\{[\s\S]*\}']
+                for pattern in patterns:
+                    match = re.search(pattern, response)
+                    if match:
+                        json_str = match.group(1) if match.lastindex else match.group(0)
+                        try:
+                            response=json.loads(json_str)
+                            break
+                        except json.JSONDecodeError:
+                            continue
+            # print(f"[Agent] LLM Response: {response}")
             
             # 4. Execute action
             if response and response.get("action"):
@@ -155,7 +176,10 @@ class Agent:
                 print(f"[Agent] Result: {self.last_action_result.get('message', 'N/A')}")
             else:
                 print("[Agent] No valid action in response")
-                
+        except AttributeError as e:
+            print(f"[Agent] Error: {e}")
+            print("[Agent] LLM Response is not a JSON, skipping JSON decode")
+            self.last_action_result = {"success": False, "message": "Please respond in JSON format only."}
         except Exception as e:
             print(f"[Agent] Error: {e}")
             self.last_action_result = {"success": False, "message": str(e)}

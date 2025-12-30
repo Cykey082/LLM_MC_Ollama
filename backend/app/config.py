@@ -13,10 +13,10 @@ class Settings(BaseSettings):
     
     # LLM Configuration
     llm_api_key: str = ""
-    llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4"
+    llm_base_url: str = "http://localhost:11434"
+    llm_model: str = "gemma2:9b-instruct-q4_0"
     llm_max_tokens: int = 1024  # LLM响应最大token数
-    llm_temperature: float = 0.7  # 创造性参数 (0-1)
+    llm_temperature: float = 0.8  # 创造性参数 (0-1)
     
     # Context/Memory Configuration
     max_history_length: int = 20  # 保留的对话历史条数
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     bot_ws_url: str = "ws://localhost:3001/ws"
     
     # Agent Configuration
-    agent_tick_rate: float = 2.0  # seconds between decisions
+    agent_tick_rate: float = 0.0  # seconds between decisions
     
     # Server Configuration
     host: str = "0.0.0.0"

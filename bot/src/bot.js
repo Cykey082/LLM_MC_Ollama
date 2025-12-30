@@ -117,7 +117,7 @@ export class Bot {
       if (distance <= range) {
         entities.push({
           type: entity.type,
-          name: entity.name || entity.username || entity.displayName || 'unknown',
+          name: entity.username || entity.displayName || entity.name || 'unknown',
           distance: Math.round(distance * 10) / 10,
           position: {
             x: Math.floor(entity.position.x),
