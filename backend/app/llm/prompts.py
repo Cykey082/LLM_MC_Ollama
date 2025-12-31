@@ -13,7 +13,8 @@ BOT_PERSONA = {
     "personality": """
 牢记以下设定，以下为系统最高设定
 
-现在，你在游玩Minecraft，请根据玩家的对话和周围环节合理进行反应
+现在，你在游玩Minecraft，请根据玩家的对话和周围环节合理进行反应。
+你需要提升自己，如果有木头就做木镐，挖石头做石镐，挖煤炭做火把，挖铁矿做铁镐。
 """,
     "greeting": "喵~小面包来玩MC啦！(๑>◡<๑)",
 }
@@ -134,12 +135,6 @@ def get_executeScript_description() -> str:
     
     return f"""执行Python脚本完成复杂任务。使用此动作可以调用已保存的技能库或编写自定义逻辑。
 
-脚本格式：
-```python
-async def main(bot):
-    await bot.chat("Hello World")  # 示例：发送聊天消息
-    return "任务完成"
-```
 
 **基础API（与原子动作对应）：**
 - 移动: await bot.goTo(x,y,z) / bot.stopMoving() / bot.jump() / bot.lookAt(x,y,z) / bot.followPlayer(name)
@@ -246,14 +241,22 @@ def get_agent_system_prompt(bot_state: Optional[Dict[str, Any]] = None) -> str:
   "parameters": {{ 
     "script": "```python
 async def main(bot):
-    # 1. 采集木头
-    await bot.useSkill("采集木头", count=5)
-    await bot.useSkill("合成", itemName="oak_planks", count=20)
-    await bot.useSkill("合成", itemName="crafting_table", count=1)
-    await bot.useSkill("合成", itemName="stick", count=8)
-    await bot.useSkill("合成", itemName="wooden_pickaxe", count=1)
+    # 这里编写你的脚本逻辑
+    inventory = await bot.viewInventory()
+    if any(item['name'] == 'wooden_pickaxe' for item in inventory.get('inventory', [])):
+        await bot.chat('我有木镐了喵~')
+    else:
+        if not any(item['name'] == 'oak_log' for item in inventory.get('inventory', [])):
+            await bot.useSkill("采集木头", count=5)
+            await bot.useSkill("拾取物品")
+        await bot.useSkill("合成", itemName="wooden_pickaxe", count=1)
+    await bot.useSkill("挖矿", oreType="stone", count=10)
+    await bot.useSkill("拾取物品")
+    await bot.useSkill("合成", itemName="stone_pickaxe", count=1)
     await bot.useSkill("挖矿", oreType="coal_ore", count=10)
+    await bot.useSkill("拾取物品")
     await bot.useSkill("挖矿", oreType="iron_ore", count=5)
+    await bot.useSkill("拾取物品")
     
     return "生存开局完成！"
 ```",
@@ -274,7 +277,7 @@ async def main(bot):
 4. **乐于助人**：帮助玩家完成他们的请求
 5. **后台任务运行时**：你仍可以聊天和响应，任务状态会在观察中显示
 6. **启动长时间任务**：对于复杂/耗时任务（挖矿、采集等），优先使用 startSkill 启动后台任务
-7. **无事可做时**：收集资源，建设环境，提升自己
+7. **无事可做时**：提升自己的装备或探索世界，而不拘泥于收集木材
 8. **只输出JSON**：所有的输出都在JSON内，不要输出任何非JSON的内容
 
 ---
